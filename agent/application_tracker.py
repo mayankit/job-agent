@@ -19,6 +19,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS applications (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     job_id              TEXT UNIQUE,
+    canonical_key       TEXT,
     company             TEXT NOT NULL,
     job_title           TEXT NOT NULL,
     location            TEXT,
@@ -36,6 +37,13 @@ CREATE TABLE IF NOT EXISTS applications (
     new_account_created INTEGER DEFAULT 0,
     notes               TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_canonical_key ON applications (canonical_key);
+"""
+
+# Migration: add canonical_key column to existing databases that pre-date it
+_MIGRATION_ADD_CANONICAL_KEY = """
+ALTER TABLE applications ADD COLUMN canonical_key TEXT;
+CREATE INDEX IF NOT EXISTS idx_canonical_key ON applications (canonical_key);
 """
 
 
@@ -50,27 +58,75 @@ def _connect(db_path: Path | None = None) -> sqlite3.Connection:
 def init_db(db_path: Path | None = None) -> None:
     with _connect(db_path) as conn:
         conn.executescript(_SCHEMA)
+        # Migrate existing DBs that don't have the canonical_key column yet
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(applications)")}
+        if "canonical_key" not in cols:
+            try:
+                conn.executescript(_MIGRATION_ADD_CANONICAL_KEY)
+                logger.info("Migrated DB: added canonical_key column")
+            except Exception as exc:
+                logger.warning("Migration skipped (column may already exist): %s", exc)
     logger.debug("Database initialized at %s", db_path or config.DB_PATH)
 
 
 def has_applied(job_id: str, db_path: Path | None = None) -> bool:
-    """Return True if this job_id is already in the DB with status=applied."""
+    """Return True if this exact portal job_id was already applied."""
     with _connect(db_path) as conn:
         row = conn.execute(
             "SELECT status FROM applications WHERE job_id = ?", (job_id,)
         ).fetchone()
     if row is None:
         return False
-    return row["status"] == "applied"
+    return row["status"] in ("applied", "submitting")
+
+
+def has_applied_canonical(
+    canonical_key: str,
+    db_path: Path | None = None,
+) -> tuple[bool, str | None]:
+    """
+    Return (already_applied, prior_portal_url) checking by canonical key.
+
+    Catches the case where the same job was found on a different portal
+    in a previous session and already submitted there.
+    Only counts terminal statuses — 'pending' / 'dry_run' do NOT block.
+    """
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """SELECT status, job_url, portal
+               FROM applications
+               WHERE canonical_key = ?
+                 AND status IN ('applied', 'submitting')
+               ORDER BY applied_at DESC
+               LIMIT 1""",
+            (canonical_key,),
+        ).fetchone()
+    if row is None:
+        return False, None
+    return True, row["job_url"]
+
+
+def was_seen(
+    canonical_key: str,
+    db_path: Path | None = None,
+) -> bool:
+    """Return True if this canonical key is in the DB under ANY status."""
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM applications WHERE canonical_key = ? LIMIT 1",
+            (canonical_key,),
+        ).fetchone()
+    return row is not None
 
 
 def upsert_application(record: dict[str, Any], db_path: Path | None = None) -> None:
     """Insert or update an application record."""
     cols = [
-        "job_id", "company", "job_title", "location", "job_url", "external_url",
-        "application_type", "ats_platform", "status", "levels_verified",
-        "estimated_tc", "domain_score", "evidence_folder", "applied_at",
-        "failure_reason", "new_account_created", "notes",
+        "job_id", "canonical_key", "company", "job_title", "location",
+        "job_url", "external_url", "application_type", "ats_platform",
+        "status", "levels_verified", "estimated_tc", "domain_score",
+        "evidence_folder", "applied_at", "failure_reason",
+        "new_account_created", "notes",
     ]
     data = {k: record.get(k) for k in cols}
     placeholders = ", ".join("?" for _ in cols)

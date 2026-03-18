@@ -47,6 +47,7 @@ from agent.job_searcher import (
     score_domain_relevance,
     search_all_portals,
 )
+from agent.job_deduplicator import canonical_key as _canonical_key_for
 from agent.application_runner import run_easy_apply, run_external_apply
 
 # ──────────────────────────────────────────────
@@ -429,14 +430,23 @@ async def run_agent(
             company = job.get("company", "Unknown")
             job_title = job.get("title", "")
             jd = job.get("job_description", "")
+            # Canonical key is attached by deduplicate(); compute fallback if missing
+            c_key = job.get("_canonical_key") or _canonical_key_for(company, job_title)
+            portal = job.get("portal", "linkedin")
 
             print(f"\n{'─' * 60}")
-            print(f"  {company} — {job_title}")
+            print(f"  {company} — {job_title}  [{portal}]")
             print(f"  {job.get('location', '')}")
 
-            # Skip if already applied
+            # ── Duplicate check (both portal job_id AND canonical key) ──────────
             if application_tracker.has_applied(job_id):
-                print("  ⏭  Already applied — skipping")
+                print("  ⏭  Already applied (same portal job ID) — skipping")
+                continue
+
+            already_applied, prior_url = application_tracker.has_applied_canonical(c_key)
+            if already_applied:
+                print(f"  ⏭  Already applied to this role on a different portal")
+                print(f"      Prior application: {prior_url or 'see DB'}")
                 continue
 
             # No-sponsorship gate
@@ -444,6 +454,7 @@ async def run_agent(
                 print("  ⏭  'No sponsorship' language found — skipping")
                 application_tracker.upsert_application({
                     "job_id": job_id,
+                    "canonical_key": c_key,
                     "company": company,
                     "job_title": job_title,
                     "location": job.get("location"),
@@ -463,6 +474,7 @@ async def run_agent(
                 print(f"  ⏭  Below target level (est. TC: ${est_tc:,}) — skipping")
                 application_tracker.upsert_application({
                     "job_id": job_id,
+                    "canonical_key": c_key,
                     "company": company,
                     "job_title": job_title,
                     "location": job.get("location"),
@@ -476,7 +488,7 @@ async def run_agent(
             domain_score = score_domain_relevance(
                 jd, search_config.get("priority_domains", [])
             )
-            print(f"  ✓  Passes level check. Est. TC: ${est_tc:,} | Domain score: {domain_score}/100")
+            print(f"  ✓  Passes checks. Est. TC: ${est_tc:,} | Domain score: {domain_score}/100 | key: {c_key}")
 
             # Create evidence folder
             folder = evidence_store.create_evidence_folder(
@@ -499,6 +511,7 @@ async def run_agent(
             # Pre-register in DB (BEFORE any form interaction)
             application_tracker.upsert_application({
                 "job_id": job_id,
+                "canonical_key": c_key,
                 "company": company,
                 "job_title": job_title,
                 "location": job.get("location"),

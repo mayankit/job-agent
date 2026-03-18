@@ -423,11 +423,20 @@ async def search_all_portals(
     max_per_title: int = 25,
 ) -> list[dict[str, Any]]:
     """
-    Search all portals configured in search_config["portals"].
-    Deduplicates across portals by (company, title) pair.
+    Search all portals in search_config["portals"], then deduplicate.
+
+    Deduplication is canonical (normalized company + title fingerprint),
+    not a string match — so "Google LLC" and "Google" collapse to the same key,
+    and "Sr Engineer" / "Senior Engineer" collapse too.
+
+    When the same real job appears on multiple portals, the listing with the
+    highest portal priority is kept (Easy Apply > LinkedIn external > others).
+    Each surviving job is annotated with '_canonical_key' for the DB.
     """
+    from agent.job_deduplicator import deduplicate
+
     portals = search_config.get("portals", ["linkedin"])
-    all_jobs: dict[str, dict[str, Any]] = {}
+    all_raw: list[dict[str, Any]] = []
 
     for portal in portals:
         fn = PORTAL_SEARCH_FUNCS.get(portal)
@@ -437,12 +446,13 @@ async def search_all_portals(
         logger.info("Searching portal: %s", portal)
         try:
             jobs = await fn(page, search_config, max_per_title)
+            # Tag each job with its source portal for priority resolution
             for job in jobs:
-                key = f"{job.get('company', '').lower()}::{job.get('title', '').lower()}"
-                all_jobs.setdefault(key, job)
+                job.setdefault("portal", portal)
+            all_raw.extend(jobs)
         except Exception as exc:
             logger.error("Portal '%s' error: %s", portal, exc)
 
-    result = list(all_jobs.values())
-    logger.info("Total unique jobs across all portals: %d", len(result))
+    # Cross-portal dedup: removes duplicates, prefers Easy Apply listings
+    result = deduplicate(all_raw)
     return result
