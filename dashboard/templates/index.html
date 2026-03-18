@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Job Application Agent — Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="header">
+    <div class="container">
+      <h1>Job Application Agent</h1>
+      <nav>
+        <a href="/" class="nav-link active">Applications</a>
+        <a href="/export/csv" class="btn btn-secondary btn-sm">Export CSV</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- Stats Banner -->
+    <div class="stats-banner">
+      <div class="stat-card">
+        <div class="stat-value">{{ stats.total }}</div>
+        <div class="stat-label">Total</div>
+      </div>
+      <div class="stat-card applied">
+        <div class="stat-value">{{ stats.by_status.get('applied', 0) }}</div>
+        <div class="stat-label">Applied</div>
+      </div>
+      <div class="stat-card failed">
+        <div class="stat-value">{{ stats.by_status.get('failed', 0) }}</div>
+        <div class="stat-label">Failed</div>
+      </div>
+      <div class="stat-card skipped">
+        <div class="stat-value">{{ stats.by_status.get('skipped', 0) + stats.by_status.get('skipped_no_sponsorship', 0) + stats.by_status.get('below_level', 0) }}</div>
+        <div class="stat-label">Skipped</div>
+      </div>
+      {% if stats.last_applied %}
+      <div class="stat-card">
+        <div class="stat-value-sm">{{ stats.last_applied[:10] }}</div>
+        <div class="stat-label">Last Applied</div>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Filters -->
+    <form method="get" class="filters">
+      <input
+        type="text"
+        name="search"
+        placeholder="Search company or title..."
+        value="{{ current_search }}"
+        class="search-input"
+      >
+      <select name="status" class="filter-select">
+        <option value="" {% if not current_status %}selected{% endif %}>All Statuses</option>
+        <option value="applied" {% if current_status == 'applied' %}selected{% endif %}>Applied</option>
+        <option value="failed" {% if current_status == 'failed' %}selected{% endif %}>Failed</option>
+        <option value="skipped" {% if current_status == 'skipped' %}selected{% endif %}>Skipped</option>
+        <option value="below_level" {% if current_status == 'below_level' %}selected{% endif %}>Below Level</option>
+        <option value="dry_run" {% if current_status == 'dry_run' %}selected{% endif %}>Dry Run</option>
+      </select>
+      <button type="submit" class="btn btn-primary">Filter</button>
+      <a href="/" class="btn btn-secondary">Clear</a>
+    </form>
+
+    <!-- Applications Table -->
+    {% if rows %}
+    <div class="table-wrapper">
+      <table class="apps-table">
+        <thead>
+          <tr>
+            <th>Company</th>
+            <th>Job Title</th>
+            <th>Location</th>
+            <th>Date</th>
+            <th>Type</th>
+            <th>TC Est.</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr>
+            <td class="company-cell"><strong>{{ row.company }}</strong></td>
+            <td>{{ row.job_title }}</td>
+            <td class="location-cell">{{ row.location or '—' }}</td>
+            <td class="date-cell">{{ (row.applied_at or '')[:10] or '—' }}</td>
+            <td>
+              <span class="badge type-{{ (row.application_type or 'unknown').replace(' ', '_') }}">
+                {{ row.application_type or 'unknown' }}
+              </span>
+            </td>
+            <td class="tc-cell">
+              {% if row.estimated_tc and row.estimated_tc > 0 %}
+                ${{ "{:,}".format(row.estimated_tc) }}
+              {% else %}—{% endif %}
+            </td>
+            <td>
+              <span class="badge status-{{ row.status or 'unknown' }}">{{ row.status or 'unknown' }}</span>
+            </td>
+            <td>
+              <a href="/application/{{ row.job_id }}" class="btn btn-sm btn-outline">View</a>
+              {% if row.job_url %}
+              <a href="{{ row.job_url }}" target="_blank" class="btn btn-sm btn-ghost">↗</a>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <p>No applications found.</p>
+      {% if current_search or current_status %}
+      <a href="/" class="btn btn-secondary">Clear filters</a>
+      {% else %}
+      <p>Run <code>python main.py --dry-run</code> to search for jobs first.</p>
+      {% endif %}
+    </div>
+    {% endif %}
+  </main>
+</body>
+</html>

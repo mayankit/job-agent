@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ app.company }} — {{ app.job_title }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="header">
+    <div class="container">
+      <h1><a href="/" class="back-link">← Dashboard</a></h1>
+      <nav>
+        <span class="badge status-{{ app.status }}">{{ app.status }}</span>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container detail-page">
+
+    <!-- Header Section -->
+    <section class="detail-header card">
+      <div class="detail-header-row">
+        <div>
+          <h2>{{ app.company }}</h2>
+          <h3>{{ app.job_title }}</h3>
+          <p class="meta-text">
+            {{ app.location or 'Location unknown' }}
+            {% if app.applied_at %} · Applied {{ app.applied_at[:10] }}{% endif %}
+          </p>
+        </div>
+        <div class="detail-links">
+          {% if app.job_url %}
+          <a href="{{ app.job_url }}" target="_blank" class="btn btn-primary">LinkedIn ↗</a>
+          {% endif %}
+          {% if app.external_url %}
+          <a href="{{ app.external_url }}" target="_blank" class="btn btn-secondary">Company ATS ↗</a>
+          {% endif %}
+        </div>
+      </div>
+    </section>
+
+    <!-- Application Info -->
+    <section class="card">
+      <h4>Application Info</h4>
+      <div class="info-grid">
+        <div class="info-item">
+          <span class="info-label">Type</span>
+          <span class="badge type-{{ (app.application_type or 'unknown').replace(' ', '_') }}">{{ app.application_type or '—' }}</span>
+        </div>
+        <div class="info-item">
+          <span class="info-label">ATS Platform</span>
+          <span>{{ app.ats_platform or '—' }}</span>
+        </div>
+        <div class="info-item">
+          <span class="info-label">TC Estimate</span>
+          <span>{% if app.estimated_tc and app.estimated_tc > 0 %}${{ "{:,}".format(app.estimated_tc) }}{% else %}—{% endif %}</span>
+        </div>
+        <div class="info-item">
+          <span class="info-label">Levels.fyi Verified</span>
+          <span>{{ '✓' if app.levels_verified else '—' }}</span>
+        </div>
+        <div class="info-item">
+          <span class="info-label">New Account Created</span>
+          <span>{{ 'Yes' if app.new_account_created else 'No' }}</span>
+        </div>
+        {% if app.failure_reason %}
+        <div class="info-item info-error">
+          <span class="info-label">Failure Reason</span>
+          <span>{{ app.failure_reason }}</span>
+        </div>
+        {% endif %}
+      </div>
+    </section>
+
+    <!-- Cover Letter -->
+    {% if app.cover_letter %}
+    <section class="card">
+      <div class="section-header">
+        <h4>Cover Letter</h4>
+        <div class="section-actions">
+          <button onclick="copyToClipboard('cover-letter-text')" class="btn btn-sm btn-secondary">Copy</button>
+          <a href="data:text/markdown;charset=utf-8,{{ app.cover_letter | urlencode }}"
+             download="{{ app.company }}_cover_letter.md"
+             class="btn btn-sm btn-outline">Download .md</a>
+        </div>
+      </div>
+      <div id="cover-letter-text" class="prose-content">{{ app.cover_letter }}</div>
+    </section>
+    {% endif %}
+
+    <!-- Form Data -->
+    {% if app.form_fields %}
+    <section class="card">
+      <h4>Submitted Form Fields</h4>
+      <table class="form-table">
+        <thead>
+          <tr><th>Field</th><th>Value</th></tr>
+        </thead>
+        <tbody>
+          {% for field in app.form_fields %}
+          <tr>
+            <td class="field-label">{{ field.field_label }}</td>
+            <td class="field-value">{{ field.value | truncate(120) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+    {% endif %}
+
+    <!-- Screenshots -->
+    {% if app.screenshots %}
+    <section class="card">
+      <h4>Screenshots</h4>
+      <div class="screenshot-grid">
+        {% for src in app.screenshots %}
+        <div class="screenshot-thumb" onclick="openLightbox('{{ src }}')">
+          <img src="{{ src }}" alt="{{ src.split('/')[-1] }}" loading="lazy">
+          <div class="screenshot-label">{{ src.split('/')[-1].replace('.png', '').replace('_', ' ') }}</div>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+
+    <!-- Job Description -->
+    {% if app.job_description %}
+    <section class="card collapsible">
+      <h4 onclick="toggleSection(this)">Job Description ▾</h4>
+      <div class="collapsible-content">
+        <div class="scrollable-text">{{ app.job_description }}</div>
+      </div>
+    </section>
+    {% endif %}
+
+    <!-- Company Research -->
+    {% if app.company_research %}
+    <section class="card collapsible">
+      <h4 onclick="toggleSection(this)">Company Research ▾</h4>
+      <div class="collapsible-content">
+        <div class="scrollable-text">{{ app.company_research }}</div>
+      </div>
+    </section>
+    {% endif %}
+
+  </main>
+
+  <!-- Lightbox -->
+  <div id="lightbox" class="lightbox" onclick="closeLightbox()">
+    <img id="lightbox-img" src="" alt="">
+  </div>
+
+  <script>
+    function copyToClipboard(id) {
+      const el = document.getElementById(id);
+      navigator.clipboard.writeText(el.innerText).then(() => {
+        const btn = event.target;
+        btn.textContent = 'Copied!';
+        setTimeout(() => btn.textContent = 'Copy', 2000);
+      });
+    }
+
+    function openLightbox(src) {
+      document.getElementById('lightbox-img').src = src;
+      document.getElementById('lightbox').style.display = 'flex';
+    }
+
+    function closeLightbox() {
+      document.getElementById('lightbox').style.display = 'none';
+    }
+
+    function toggleSection(header) {
+      const content = header.nextElementSibling;
+      content.style.display = content.style.display === 'none' ? 'block' : 'none';
+    }
+  </script>
+</body>
+</html>

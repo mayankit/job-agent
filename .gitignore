@@ -1,0 +1,104 @@
+# =============================================================
+# SECRETS & CREDENTIALS — NEVER COMMIT
+# =============================================================
+.env
+.env.local
+.env.*.local
+*.enc
+passwords.enc
+
+# =============================================================
+# PERSONAL / PII DATA — NEVER COMMIT
+# =============================================================
+
+# Your resume and stories (contain PII)
+my_documents/resume/
+my_documents/stories/
+
+# Extracted profile (contains full name, email, phone, address)
+my_documents/profile.json
+
+# Job search preferences (contains email, TC expectations)
+my_documents/search_config.json
+
+# The whole my_documents dir except the README and the dirs themselves
+# (belt-and-suspenders: the above patterns already catch individual files)
+my_documents/*.json
+my_documents/*.pdf
+my_documents/*.docx
+my_documents/*.doc
+my_documents/*.txt
+!my_documents/README.txt
+
+# =============================================================
+# APPLICATION EVIDENCE — NEVER COMMIT
+# =============================================================
+applications/
+
+# =============================================================
+# LOCAL DATABASE & CACHE — NEVER COMMIT
+# =============================================================
+applications.db
+applications.db-wal
+applications.db-shm
+level_cache.json
+
+# =============================================================
+# LOGS — NEVER COMMIT
+# =============================================================
+run.log
+*.log
+
+# =============================================================
+# PYTHON ARTIFACTS
+# =============================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+*.so
+
+# =============================================================
+# VIRTUAL ENVIRONMENTS
+# =============================================================
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# =============================================================
+# OS
+# =============================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# =============================================================
+# IDE
+# =============================================================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.settings/
+
+# =============================================================
+# PLAYWRIGHT / BROWSER ARTIFACTS
+# =============================================================
+playwright-report/
+test-results/
+.playwright-mcp/

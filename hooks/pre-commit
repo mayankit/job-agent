@@ -1,0 +1,255 @@
+#!/usr/bin/env bash
+# =============================================================
+# pre-commit — Sensitive Data Guard
+# =============================================================
+# Blocks commits that would expose:
+#   • API keys / secrets
+#   • Personal data (resume, profile, PII)
+#   • Encrypted credential files
+#   • Application evidence / database
+#   • Log files
+#
+# Install: bash install_hooks.sh
+# Compatible with macOS (BSD grep) and Linux (GNU grep).
+# =============================================================
+
+set -euo pipefail
+
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+ERRORS=0
+WARNINGS=0
+
+err()  { echo -e "${RED}${BOLD}  [BLOCKED]${NC}  $*"; ERRORS=$((ERRORS + 1)); }
+warn() { echo -e "${YELLOW}${BOLD}  [WARNING]${NC}  $*"; WARNINGS=$((WARNINGS + 1)); }
+ok()   { echo -e "${GREEN}  [OK]${NC}      $*"; }
+
+echo ""
+echo -e "${BOLD}Running pre-commit security scan...${NC}"
+echo "─────────────────────────────────────────────────────────"
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null || true)
+
+if [[ -z "$STAGED" ]]; then
+  echo "No staged files."
+  echo ""
+  exit 0
+fi
+
+# =============================================================
+# 1. PATH-BASED BLOCKS — file paths that must never be staged
+#    .env.example is explicitly ALLOWED (it's a safe template)
+# =============================================================
+
+declare -a BLOCKED_PATHS=(
+  "^\.env$"
+  "^\.env\.local$"
+  "\.enc$"
+  "^passwords"
+  "^my_documents/resume/"
+  "^my_documents/stories/"
+  "^my_documents/profile\.json$"
+  "^my_documents/search_config\.json$"
+  "^my_documents/.*\.json$"
+  "^my_documents/.*\.pdf$"
+  "^my_documents/.*\.docx?$"
+  "^applications/"
+  "^applications\.db"
+  "^level_cache\.json$"
+  "^run\.log$"
+  "\.log$"
+)
+
+# Files that are explicitly safe regardless of path pattern
+declare -a PATH_ALLOWLIST=(
+  ".env.example"
+)
+
+while IFS= read -r file; do
+  # Check allowlist first
+  is_allowed=0
+  for allowed in "${PATH_ALLOWLIST[@]}"; do
+    if [[ "$file" == "$allowed" ]]; then
+      is_allowed=1; break
+    fi
+  done
+  [[ $is_allowed -eq 1 ]] && continue
+
+  for pattern in "${BLOCKED_PATHS[@]}"; do
+    if echo "$file" | grep -qE "$pattern"; then
+      err "Sensitive file staged: ${BOLD}$file${NC}  (rule: $pattern)"
+      break
+    fi
+  done
+done <<< "$STAGED"
+
+# =============================================================
+# 2. CONTENT SCANNING — look for real secrets inside files
+#
+# Placeholder values in docs/examples are excluded via
+# PLACEHOLDER_PATTERNS below. The scan stops at first match
+# per pattern per file to keep output readable.
+# =============================================================
+
+# Files whose content is never secret-scanned
+declare -a CONTENT_SCAN_SKIPLIST=(
+  "hooks/pre-commit"
+  "install_hooks.sh"
+  ".env.example"
+)
+
+# Patterns indicating a REAL secret (not a placeholder)
+# Kept BSD grep compatible: no alternation inside the pattern string,
+# no \s (use [[:space:]] instead), no \b word boundaries.
+declare -a SECRET_PATTERNS=(
+  "sk-ant-[a-zA-Z0-9]{10,}"
+  "ANTHROPIC_API_KEY[[:space:]]*=[[:space:]]*sk-ant-[a-zA-Z0-9]"
+  "ENCRYPTION_KEY[[:space:]]*=[[:space:]]*[a-zA-Z0-9+/=]{40,}"
+  "AKIA[0-9A-Z]{16}"
+  "Bearer[[:space:]]+[a-zA-Z0-9+/=]{40,}"
+  "BEGIN PRIVATE KEY"
+  "BEGIN RSA PRIVATE KEY"
+  "BEGIN OPENSSH PRIVATE KEY"
+)
+
+# If a matched line contains ANY of these strings, it's treated as
+# a known placeholder and NOT flagged.
+declare -a PLACEHOLDER_MARKERS=(
+  "your-key-here"
+  "your_key_here"
+  "sk-ant-your"
+  "example"
+  "placeholder"
+  "TODO"
+  "REPLACE_ME"
+  "<your"
+  "xxxx"
+)
+
+while IFS= read -r file; do
+  # Skip binary / non-text files
+  case "$file" in
+    *.png|*.jpg|*.jpeg|*.gif|*.ico|*.pdf|*.docx|*.db|*.enc) continue ;;
+  esac
+
+  # Skip content-scan allowlist
+  is_skip=0
+  for skip in "${CONTENT_SCAN_SKIPLIST[@]}"; do
+    if [[ "$file" == "$skip" ]]; then
+      is_skip=1; break
+    fi
+  done
+  [[ $is_skip -eq 1 ]] && continue
+
+  if ! git show ":$file" > /dev/null 2>&1; then
+    continue
+  fi
+
+  content=$(git show ":$file" 2>/dev/null || true)
+
+  for pattern in "${SECRET_PATTERNS[@]}"; do
+    matched_line=$(echo "$content" | grep -iE "$pattern" | head -1 || true)
+    [[ -z "$matched_line" ]] && continue
+
+    # Check if the matched line contains a known placeholder
+    is_placeholder=0
+    for marker in "${PLACEHOLDER_MARKERS[@]}"; do
+      if echo "$matched_line" | grep -qi "$marker"; then
+        is_placeholder=1; break
+      fi
+    done
+    [[ $is_placeholder -eq 1 ]] && continue
+
+    lineno=$(echo "$content" | grep -niE "$pattern" | head -1 | cut -d: -f1 || true)
+    err "Possible secret in ${BOLD}$file${NC} (line ~${lineno:-?}): matched pattern '$pattern'"
+  done
+done <<< "$STAGED"
+
+# =============================================================
+# 3. CONTENT SCANNING — personally identifiable information
+#    Only warns (does not block) — lets developer decide.
+#    README.md and .env.example are skipped.
+# =============================================================
+
+PII_SCAN_EXTENSIONS="*.py|*.json|*.yaml|*.yml|*.cfg|*.ini|*.txt"
+
+declare -a PII_SAFE_FILES=(
+  ".gitignore"
+  "README.md"
+  ".env.example"
+  "hooks/pre-commit"
+  "install_hooks.sh"
+  "requirements.txt"
+  "my_documents/README.txt"
+)
+
+EMAIL_PATTERN="[a-zA-Z0-9._%+-]{3,}@[a-zA-Z0-9.-]{3,}\.[a-zA-Z]{2,}"
+
+while IFS= read -r file; do
+  # Only scan specific extension types
+  case "$file" in
+    *.py|*.json|*.yaml|*.yml|*.cfg|*.ini|*.txt) ;;
+    *) continue ;;
+  esac
+
+  is_safe=0
+  for safe in "${PII_SAFE_FILES[@]}"; do
+    if [[ "$file" == "$safe" ]]; then
+      is_safe=1; break
+    fi
+  done
+  [[ $is_safe -eq 1 ]] && continue
+
+  content=$(git show ":$file" 2>/dev/null || true)
+  match=$(echo "$content" | grep -oE "$EMAIL_PATTERN" | head -1 || true)
+
+  if [[ -n "$match" ]]; then
+    # Ignore obvious placeholder email addresses
+    if ! echo "$match" | grep -qiE "(example|placeholder|your_|your-|<email>|test@|user@example|foo@|bar@|noreply@|github\.com|anthropic\.com)"; then
+      warn "Possible real email in ${BOLD}$file${NC}: '$match' — verify this is not personal data"
+    fi
+  fi
+done <<< "$STAGED"
+
+# =============================================================
+# 4. NOTE if .gitignore is included (good practice check)
+# =============================================================
+if echo "$STAGED" | grep -q "\.gitignore"; then
+  ok ".gitignore is included in this commit"
+fi
+
+# =============================================================
+# RESULT
+# =============================================================
+echo "─────────────────────────────────────────────────────────"
+
+if [[ $ERRORS -gt 0 ]]; then
+  echo ""
+  echo -e "${RED}${BOLD}  COMMIT BLOCKED — $ERRORS sensitive item(s) found.${NC}"
+  echo ""
+  echo "  To fix:"
+  echo "    1. Unstage the flagged file:    git reset HEAD <file>"
+  echo "    2. Verify it is in .gitignore"
+  echo "    3. Remove the secret from code  and use .env instead"
+  echo ""
+  echo "  Emergency bypass (only if you are 100% certain this is safe):"
+  echo "    git commit --no-verify"
+  echo ""
+  exit 1
+fi
+
+if [[ $WARNINGS -gt 0 ]]; then
+  echo ""
+  echo -e "${YELLOW}${BOLD}  $WARNINGS warning(s) — review above.${NC}"
+  echo "  These are non-blocking. Verify the flagged content is not real PII."
+  echo ""
+fi
+
+echo ""
+echo -e "${GREEN}${BOLD}  Security scan passed. Committing...${NC}"
+echo ""
+exit 0
